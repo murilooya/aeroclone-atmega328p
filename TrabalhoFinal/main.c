@@ -2,71 +2,46 @@
 
 #include <avr/io.h>
 #include "lcd_16X2_ATMEGA328.h"
+#include "ds18b20.h"
+
 #include <stdio.h>
+#include <stdbool.h>
 
-float water_temperature;
-float ref_temperature;
-
-enum{	EQUAL = 0,
-		HOT,
-		COLD,
-	};
-
-uint8_t comparisonTag = EQUAL;  //1 heat up, 2 cool down, 0 equal
+int water_temperature;
+int ref_temperature = 18;
+int histerese = 2;
 
 char buffer [20];
 
-void refComparison(){
-	if (water_temperature > ref_temperature){
-		Lcd_out(1, 14, "-")
-		comparisonTag = HOT;
-		return;		
-	}
-	
-	if (water_temperature < ref_temperature){
-		Lcd_out(1, 14, "+");
-		comparisonTag = COLD;
-		return;
-	}
-	else{
-		Lcd_out(1, 14, "=");
-		comparisonTag = EQUAL;
-		return
-	}
-}
-
-void HBridgeController(uint8_t tag){
-	switch(tag){
-		case HOT:
-			coolPeltier();
-			break;
-		case COLD:
-			heatPeltier();
-			break;
-		case EQUAL:
-			break;
-		default:
-			break;
-	}
-}
-
-void turnOnPump(){
-	PINC |= (1<<PB0); //one logic in pump pin
-}
-
-void enableHBridge(){
-	PINC |= (1<<PB1); //enable h-bridge
-}
-
-void disableHBridge(){
-	PINC &= ~(1<<PB1); //disable h-bridge
-}
-
 void writeDisplay(){
-	sprintf(buffer, "Refe: %.2f C", ref_temperature);
+	sprintf(buffer, "Refe: %d C", ref_temperature);
 	Lcd_out (1,1, buffer);
-	sprintf(buffer, "Agua: %f C", water_temperature);
+	sprintf(buffer, "Agua: %d C", water_temperature);
 	Lcd_out(2,1, buffer);
+}
+
+bool verifyHisteresis()
+{
+	if (water_temperature <= (ref_temperature + histerese) && water_temperature >= (ref_temperature - histerese))
+	{
+		return true;
+	}
+	return false;
+}
+
+void turnOnPump()
+{
+	PINC |= (1<<PB0);
+}
+
+void turnOnPeltier()
+{
+	PINC |= (1<<PB2);
+}
+
+void turnOffPeltier()
+{
+	PINC &= ~(1<<PB2);
 }
 
 int main(void)
@@ -74,26 +49,27 @@ int main(void)
     //setup
 	
 	DDRC |= (1<<PB0); //output pump pin
-	DDRC |= (1<<PB1); //output enable h-bridge
-	DDRC |= (1<<PB2); //output peltier
-	
-	DDRC |= (1<<PB3); //output h-brigde controller
-	
-	
-	DDRC &= ~(1<<PB3); //input ds18b20
-	PORTC &= ~(1<<PB3); //pull-up off
+	DDRC |= (1<<PB2); //output peltier A side
 		
-	PINC &= ~((1<<PB0) + (1<<PB1) + (1<<PB2) + (1<<PB3)); //zero logic output pin
+	configura_precisao(12);		
+
+	PINC &= ~((1<<PB0) + (1<<PB1) + (1<<PB2)); //zero logic output pin
 	
 	Lcd_init(); //Lcd setup
-	
+
+	turnOnPump();
 	
     while (1) 
     {
-		DS18Read();
+		water_temperature = le_temperatura();
 		writeDisplay();
-		refComparison();
-		HBridgeController(comparisonTag);
+		if ((water_temperature <= ref_temperature) && !verifyHisteresis())
+		{
+			turnOnPeltier();
+		}
+		else{
+			turnOffPeltier();
+		}
     }
 }
 
